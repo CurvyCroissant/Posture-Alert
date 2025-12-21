@@ -1,5 +1,3 @@
-# Run Command: streamlit run posture_app.py
-
 import streamlit as st
 import cv2
 import mediapipe as mp
@@ -10,12 +8,13 @@ import os
 import platform
 from datetime import datetime
 
-# --- CONFIGURATION & CONSTANTS ---
-# Landmarks
-LEFT_EYE = 5
-RIGHT_EYE = 2
-LEFT_SHOULDER = 12
-RIGHT_SHOULDER = 11
+# MediaPipe Pose Landmarks
+# Index 2 = Left Eye, Index 5 = Right Eye
+LEFT_EYE = 2
+RIGHT_EYE = 5
+# Index 11 = Left Shoulder, Index 12 = Right Shoulder
+LEFT_SHOULDER = 11
+RIGHT_SHOULDER = 12
 
 # Thresholds
 TILT_THRESHOLD_Y = 0.05
@@ -26,19 +25,20 @@ ABSOLUTE_MIN_WIDTH = 0.1
 ALERT_COOLDOWN_SECONDS = 3.0
 
 def play_beep():
+    """Plays a system sound based on the OS."""
     system_name = platform.system()
     try:
         if system_name == "Windows":
             import winsound
             winsound.Beep(1000, 500)
-        elif system_name == "Darwin":
+        elif system_name == "Darwin":  # macOS
             os.system('say "Alert"') 
-        else:
+        else: # Linux / Other
             print('\a')
-    except Exception as e:
+    except Exception:
         pass
 
-# --- INITIALIZATION ---
+# Initialization Phase
 if 'monitoring_active' not in st.session_state:
     st.session_state.monitoring_active = False
 if 'log_data' not in st.session_state:
@@ -51,20 +51,22 @@ if 'calibrated_shoulder_width' not in st.session_state:
     st.session_state.calibrated_shoulder_width = None
 if 'latest_landmarks' not in st.session_state:
     st.session_state.latest_landmarks = None
-# NEW: State to toggle the report visibility
 if 'show_report' not in st.session_state:
     st.session_state.show_report = False
 
 mp_drawing = mp.solutions.drawing_utils
 mp_pose = mp.solutions.pose
 
-# --- CORE LOGIC ---
+# The Logic Core of the program
 
 def calculate_metrics(landmarks, baseline_eye_y):
     if not landmarks:
         return False, 0, 0, 0, "No Detection", {}
 
+    # Find the average Y of Eyes
     eye_y_avg = (landmarks[LEFT_EYE].y + landmarks[RIGHT_EYE].y) / 2
+    
+    # For Lateral ing to find the: (Shoulder Difference)
     delta_y_tilt = abs(landmarks[LEFT_SHOULDER].y - landmarks[RIGHT_SHOULDER].y)
     
     vertical_drop = 0.0
@@ -101,7 +103,7 @@ def calculate_metrics(landmarks, baseline_eye_y):
         
     return is_good, vertical_drop, delta_y_tilt, feedback, metrics_display
 
-# --- UI LAYOUT ---
+# UI Design using Streamlit
 st.set_page_config(page_title="Posture Alert", layout="wide")
 st.title("Posture Alert")
 
@@ -120,10 +122,9 @@ with col2:
         if st.button("Start Camera", type="primary"):
             st.session_state.monitoring_active = True
             st.session_state.log_data = []
-            st.session_state.show_report = False # Hide old report when starting new
+            st.session_state.show_report = False
             st.rerun() 
         
-        # NEW BUTTON: View Report (Only shows if data exists from previous session)
         if st.session_state.log_data:
             st.write("---")
             if st.button("View Session Report"):
@@ -136,15 +137,17 @@ with col2:
         if st.button("CALIBRATE Set Baseline"):
             if st.session_state.latest_landmarks:
                 lms = st.session_state.latest_landmarks
+                
+                # Calibrate based on EYES
                 current_eye_y = (lms[LEFT_EYE].y + lms[RIGHT_EYE].y) / 2
                 
-                # UPDATED: Increased offset from 0.02 to 0.05
-                # This moves the baseline line lower down the screen, allowing
-                # the user to look down at their keyboard without triggering an alert.
+                # Add offset (0.05) for test case when the user is looking below
                 st.session_state.baseline_eye_y = current_eye_y + 0.05
                 
+                # To lock the shoulder width
                 current_width = abs(lms[LEFT_SHOULDER].x - lms[RIGHT_SHOULDER].x)
                 st.session_state.calibrated_shoulder_width = current_width
+                
                 st.toast(f"Calibrated! Baseline Y: {st.session_state.baseline_eye_y:.2f}")
                 st.rerun()
             else:
@@ -154,7 +157,6 @@ with col2:
         
         if st.button("Stop Camera"):
             st.session_state.monitoring_active = False
-            # We don't auto-show report anymore, user clicks the button
             st.rerun() 
     
     st.divider()
@@ -176,7 +178,7 @@ with col2:
     else:
         st.success(f"[OK] Calibrated (Y: {st.session_state.baseline_eye_y:.2f})")
 
-# --- MAIN LOOP ---
+# Main Function
 if st.session_state.monitoring_active:
     
     cap = cv2.VideoCapture(0)
@@ -194,6 +196,7 @@ if st.session_state.monitoring_active:
                     st.write("Failed to capture image")
                     break
                 
+                # Processing the image by converting the image color using cv2 cvtColor
                 image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 image.flags.writeable = False
                 results = pose.process(image)
@@ -204,6 +207,7 @@ if st.session_state.monitoring_active:
                     lms = results.pose_landmarks.landmark
                     st.session_state.latest_landmarks = lms
                     
+                    # To filter out background (test case when someone is behind the user)
                     current_width = abs(lms[LEFT_SHOULDER].x - lms[RIGHT_SHOULDER].x)
                     ignore_frame = False
                     
@@ -220,11 +224,11 @@ if st.session_state.monitoring_active:
                         time.sleep(0.03)
                         continue
 
+                    # The Metrics and for Alerts
                     is_good, drop_val, d_y, text, metrics_txt = calculate_metrics(lms, st.session_state.baseline_eye_y)
                     
-                    # --- UPDATED LOGIC: Only alert and log IF Calibrated ---
+                    # Only alert/log if calibrated
                     if st.session_state.baseline_eye_y is not None:
-                        # 1. Update Status Indicator (Green/Red)
                         if is_good:
                             color = (0, 255, 0)
                             status_indicator.success(f"[OK] {text}")
@@ -238,7 +242,6 @@ if st.session_state.monitoring_active:
                                 st.toast("Alert!")
                                 st.session_state.last_alert_time = current_time
                         
-                        # 2. Record Data
                         st.session_state.log_data.append({
                             "Timestamp": datetime.now(),
                             "Vertical_Drop": drop_val,
@@ -246,16 +249,14 @@ if st.session_state.monitoring_active:
                             "Status": text
                         })
                     else:
-                        # Not Calibrated: Show Yellow "Info", No Beep, No Log
                         color = (255, 255, 0)
                         status_indicator.info("Please click [CALIBRATE] to start monitoring.")
                     
-                    # Metrics are still updated so you can see live tilt before starting
                     metric_drop.metric("Vertical Drop", metrics_txt["Vertical Drop"])
                     metric_tilt.metric("Lateral Tilt", metrics_txt["Lateral Tilt (Delta Y)"])
                     
+                    # To draw visuals for the csv
                     h, w, c = image.shape
-                    
                     if st.session_state.baseline_eye_y is not None:
                         base_y_px = int(st.session_state.baseline_eye_y * h)
                         cv2.line(image, (0, base_y_px), (w, base_y_px), (0, 255, 0), 2)
@@ -272,7 +273,7 @@ if st.session_state.monitoring_active:
 
         cap.release()
 
-# --- POST-SESSION ANALYSIS (Triggered by Button) ---
+# To generate the report after the session
 if st.session_state.show_report and st.session_state.log_data:
     st.divider()
     st.header("Session Analysis Report")
@@ -297,12 +298,10 @@ if st.session_state.show_report and st.session_state.log_data:
         st.divider()
         
         c_chart1, c_chart2 = st.columns(2)
-        
         with c_chart1:
             st.subheader("Posture Trends")
             st.line_chart(df[["Vertical_Drop", "Tilt_Delta_Y"]])
             st.caption("Lower values are better.")
-            
         with c_chart2:
             st.subheader("Issue Distribution")
             status_counts = df['Status'].value_counts()
