@@ -114,6 +114,42 @@ def calculate_metrics(landmarks, baseline_eye_y):
         
     return is_good, vertical_drop, delta_y_tilt, feedback, metrics_display
 
+
+def draw_keypoints(image, landmarks, color=(0, 255, 255)):
+    if not landmarks:
+        return
+    h, w, _ = image.shape
+    # MediaPipe Pose landmark indices
+    key_indices = [0, 1, 2, 3, 4, 5, 6, 9, 10, 11, 12]  # nose, eyes, mouth, shoulders
+    for idx in key_indices:
+        if idx >= len(landmarks):
+            continue
+        lm = landmarks[idx]
+        x = int(lm.x * w)
+        y = int(lm.y * h)
+        cv2.circle(image, (x, y), 4, color, -1)
+
+    def draw_line(i, j, line_color=(255, 255, 255), thickness=2):
+        if i >= len(landmarks) or j >= len(landmarks):
+            return
+        li = landmarks[i]
+        lj = landmarks[j]
+        xi, yi = int(li.x * w), int(li.y * h)
+        xj, yj = int(lj.x * w), int(lj.y * h)
+        cv2.line(image, (xi, yi), (xj, yj), line_color, thickness)
+
+    # Eye arcs and nose bridge
+    draw_line(1, 2)
+    draw_line(2, 3)
+    draw_line(4, 5)
+    draw_line(5, 6)
+    draw_line(1, 0)
+    draw_line(0, 4)
+
+    # Mouth and shoulders
+    draw_line(9, 10)
+    draw_line(11, 12)
+
 # UI Design using Streamlit
 st.set_page_config(page_title="Posture Alert", layout="wide")
 st.title("Posture Alert")
@@ -227,6 +263,7 @@ if st.session_state.monitoring_active:
                 if results.pose_landmarks:
                     lms = results.pose_landmarks[0]
                     st.session_state.latest_landmarks = lms
+                    draw_keypoints(image, lms)
                     
                     # To filter out background (test case when someone is behind the user)
                     current_width = abs(lms[LEFT_SHOULDER].x - lms[RIGHT_SHOULDER].x)
