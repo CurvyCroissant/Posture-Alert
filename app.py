@@ -6,7 +6,11 @@ import time
 import pandas as pd
 import os
 import platform
+import urllib.request
 from datetime import datetime
+
+from mediapipe.tasks import python as mp_tasks
+from mediapipe.tasks.python import vision
 
 # MediaPipe Pose Landmarks
 # Index 2 = Left Eye, Index 5 = Right Eye
@@ -54,8 +58,15 @@ if 'latest_landmarks' not in st.session_state:
 if 'show_report' not in st.session_state:
     st.session_state.show_report = False
 
-mp_drawing = mp.solutions.drawing_utils
-mp_pose = mp.solutions.pose
+POSE_MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task"
+
+
+def ensure_pose_model():
+    model_path = os.path.join(os.path.dirname(__file__), "model.task")
+    if not os.path.exists(model_path):
+        with st.spinner("Downloading pose model..."):
+            urllib.request.urlretrieve(POSE_MODEL_URL, model_path)
+    return model_path
 
 # The Logic Core of the program
 
@@ -187,7 +198,17 @@ if st.session_state.monitoring_active:
         st.error("Camera not found! Please check your connection.")
         st.session_state.monitoring_active = False
     else:
-        with mp_pose.Pose(min_detection_confidence=0.5, min_tracking_confidence=0.5) as pose:
+        model_path = ensure_pose_model()
+        options = vision.PoseLandmarkerOptions(
+            base_options=mp_tasks.BaseOptions(model_asset_path=model_path),
+            running_mode=vision.RunningMode.VIDEO,
+            num_poses=1,
+            min_pose_detection_confidence=0.5,
+            min_pose_presence_confidence=0.5,
+            min_tracking_confidence=0.5,
+        )
+
+        with vision.PoseLandmarker.create_from_options(options) as landmarker:
             st_frame = col1.empty()
             
             while st.session_state.monitoring_active and cap.isOpened():
@@ -197,14 +218,14 @@ if st.session_state.monitoring_active:
                     break
                 
                 # Processing the image by converting the image color using cv2 cvtColor
-                image = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                image.flags.writeable = False
-                results = pose.process(image)
-                image.flags.writeable = True
-                image = cv2.cvtColor(image, cv2.COLOR_RGB2BGR)
+                image_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=image_rgb)
+                timestamp_ms = int(time.time() * 1000)
+                results = landmarker.detect_for_video(mp_image, timestamp_ms)
+                image = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2BGR)
                 
                 if results.pose_landmarks:
-                    lms = results.pose_landmarks.landmark
+                    lms = results.pose_landmarks[0]
                     st.session_state.latest_landmarks = lms
                     
                     # To filter out background (test case when someone is behind the user)
@@ -261,12 +282,6 @@ if st.session_state.monitoring_active:
                         base_y_px = int(st.session_state.baseline_eye_y * h)
                         cv2.line(image, (0, base_y_px), (w, base_y_px), (0, 255, 0), 2)
                         cv2.putText(image, "Baseline Height", (10, base_y_px - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
-
-                    mp_drawing.draw_landmarks(
-                        image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS,
-                        mp_drawing.DrawingSpec(color=color, thickness=2, circle_radius=2),
-                        mp_drawing.DrawingSpec(color=(255,255,255), thickness=2, circle_radius=2)
-                    )
 
                 st_frame.image(image, channels="BGR", use_container_width=True)
                 time.sleep(0.03)
